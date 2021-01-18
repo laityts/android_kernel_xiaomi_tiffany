@@ -551,7 +551,7 @@
 			imon-l-slot = <1>;
 			vmon-r-slot = <1>;
 			imon-r-slot = <1>;
-			maxim,98927-reset-gpio = <&tlmm 89 0>;
+			maxim,98927-reset-gpio = <&tlmm 86 0>;
 		};
 		wsa881x_i2c_e: wsa881x-i2c-codec@e {
 			status = "disabled";

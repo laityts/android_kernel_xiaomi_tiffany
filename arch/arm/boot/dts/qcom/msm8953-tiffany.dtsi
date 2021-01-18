@@ -38,7 +38,7 @@
 					type = "ext4";
 					mnt_flags = "ro,barrier=1,discard";
 					fsmgr_flags = "wait,verify";
-					status = "ok";
+					status = "disable";
 				};
 				system {
 					compatible = "android,system";
@@ -160,7 +160,7 @@
 
 };
 
-#include "msm8953-pinctrl.dtsi"
+#include "msm8953-pinctrl-tiffany.dtsi"
 #include "msm8953-cpu.dtsi"
 #include "msm8953-gpu.dtsi"
 #include "msm8953-ion.dtsi"
@@ -572,9 +572,10 @@
 		compatible = "qcom,bcl";
 		qcom,bcl-enable;
 		qcom,bcl-framework-interface;
-		#qcom,bcl-freq-control-list = <&CPU0 &CPU1 &CPU2 &CPU3 &CPU4 &CPU5 &CPU6 &CPU7>;
+		qcom,bcl-freq-control-list = <&CPU0 &CPU1 &CPU2 &CPU3
+						&CPU4 &CPU5 &CPU6 &CPU7>;
 		qcom,bcl-hotplug-list = <&CPU6 &CPU7>;
-		qcom,bcl-soc-hotplug-list = <&CPU4 &CPU5>;
+		qcom,bcl-soc-hotplug-list = <&CPU4 &CPU5 &CPU6 &CPU7>;
 		qcom,ibat-monitor {
 			qcom,low-threshold-uamp = <3400000>;
 			qcom,high-threshold-uamp = <4200000>;
@@ -2123,6 +2124,7 @@
 		USB3_GDSC-supply = <&gdsc_usb30>;
 		qcom,usb-dbm = <&dbm_1p5>;
 		qcom,msm-bus,name = "usb3";
+		qcom,usbin-vadc = <&pmi8940_vadc>;
 		qcom,msm-bus,num-cases = <3>;
 		qcom,msm-bus,num-paths = <1>;
 		qcom,detect-dpdm-floating;
@@ -2240,9 +2242,9 @@
 		qcom,vdd-voltage-level = <0 925000 925000>;
 
 		qcom,qusb-phy-init-seq = <0xF8 0x80
-					0x93 0x84
-					0x83 0x88
-					0xC7 0x8C
+					0x53 0x84
+					0x93 0x88
+					0xCf 0x8C
 					0x14 0x9C
 					0x30 0x08
 					0x79 0x0C
@@ -2389,10 +2391,10 @@
 };
 
 #include "msm-pm8953-rpm-regulator.dtsi"
-#include "msm-pm8953.dtsi"
+#include "msm-pm8953-tiffany.dtsi"
 #include "msm8953-regulator.dtsi"
-#include "msm-audio.dtsi"
-#include "msm8953-audio.dtsi"
+#include "msm-audio-tiffany.dtsi"
+#include "msm8953-audio-tiffany.dtsi"
 #include "msm-gdsc-8916.dtsi"
 #include "msm8953-camera.dtsi"
 #include "msm8953-mdss.dtsi"
