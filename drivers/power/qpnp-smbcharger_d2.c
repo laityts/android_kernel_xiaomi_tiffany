@@ -444,19 +444,19 @@ module_param_named(
 	int, S_IRUSR | S_IWUSR
 );
 
-static int smbchg_default_hvdcp_icl_ma = 1800;
+static int smbchg_default_hvdcp_icl_ma = 2500;
 module_param_named(
 	default_hvdcp_icl_ma, smbchg_default_hvdcp_icl_ma,
 	int, S_IRUSR | S_IWUSR
 );
 
-static int smbchg_default_hvdcp3_icl_ma = 3000;
+static int smbchg_default_hvdcp3_icl_ma = 2500;
 module_param_named(
 	default_hvdcp3_icl_ma, smbchg_default_hvdcp3_icl_ma,
 	int, S_IRUSR | S_IWUSR
 );
 
-static int smbchg_default_dcp_icl_ma = 2000;
+static int smbchg_default_dcp_icl_ma = 1800;
 module_param_named(
 	default_dcp_icl_ma, smbchg_default_dcp_icl_ma,
 	int, S_IRUSR | S_IWUSR
@@ -474,6 +474,7 @@ module_param_named(
 	int, S_IRUSR | S_IWUSR
 );
 
+static int hvdcp_type;
 #define WIPOWER_DEFAULT_HYSTERISIS_UV	250000
 static int wipower_dcin_hyst_uv = WIPOWER_DEFAULT_HYSTERISIS_UV;
 module_param_named(
@@ -942,16 +943,12 @@ static int get_prop_batt_status(struct smbchg_chip *chip)
 		return POWER_SUPPLY_STATUS_UNKNOWN;
 	}
 
-	if (reg & BAT_TCC_REACHED_BIT && !chip->batt_warm)
+	if (reg & BAT_TCC_REACHED_BIT)
 		return POWER_SUPPLY_STATUS_FULL;
-	else if (reg & BAT_TCC_REACHED_BIT && chip->batt_warm)
-		return POWER_SUPPLY_STATUS_CHARGING;
 
 	chg_inhibit = reg & CHG_INHIBIT_BIT;
-	if (chg_inhibit && !chip->batt_warm)
+	if (chg_inhibit)
 		return POWER_SUPPLY_STATUS_FULL;
-	else if(chg_inhibit && chip->batt_warm)
-		return POWER_SUPPLY_STATUS_CHARGING;
 
 	rc = smbchg_read(chip, &reg, chip->chgr_base + CHGR_STS, 1);
 	if (rc < 0) {
@@ -1091,7 +1088,7 @@ static int get_prop_battery_charge_full_design(struct smbchg_chip *chip)
 	if (chip->bms_psy) {
 		chip->bms_psy->get_property(chip->bms_psy,
 				POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN, &ret);
-		return ret.intval;
+		return 3080000;
 	} else {
 		pr_debug("No BMS supply registered return 0\n");
 	}
@@ -1105,7 +1102,7 @@ static int get_prop_battery_charge_full(struct smbchg_chip *chip)
 	if (chip->bms_psy) {
 		chip->bms_psy->get_property(chip->bms_psy,
 			  POWER_SUPPLY_PROP_CHARGE_FULL, &ret);
-		return ret.intval;
+		return 3080000;
 	} else {
 		pr_debug("No BMS supply registered return 0\n");
 	}
@@ -3067,21 +3064,12 @@ static int set_usb_current_limit_vote_cb(struct votable *votable,
 	return 0;
 }
 
-#define		PCBA_V1_IN		35
-#define		PCBA_V2_IN		38
-#define		PCBA_V2_CN		36
 static int smbchg_system_temp_level_set(struct smbchg_chip *chip,
 								int lvl_sel)
 {
 	int rc = 0;
 	int prev_therm_lvl;
 	int thermal_icl_ma;
-
-	unsigned int	India_thermal_mitigation[7] = {2500, 2500, 1900, 1900, 1000, 1000, 0};
-
-	int *pcba_config = NULL;
-	pcba_config = (int *)smem_find(SMEM_ID_VENDOR1, sizeof(int), 0, SMEM_ANY_HOST_FLAG);
-	pr_err("pcba config check=%d.\n", *(pcba_config));
 
 	if (!chip->thermal_mitigation) {
 		dev_err(chip->dev, "Thermal mitigation not supported\n");
@@ -3136,16 +3124,10 @@ static int smbchg_system_temp_level_set(struct smbchg_chip *chip,
 			pr_err("Couldn't disable DC thermal ICL vote rc=%d\n",
 				rc);
 	} else {
-		if( *(pcba_config) == PCBA_V1_IN
-				|| *(pcba_config) == PCBA_V2_IN) {
-			thermal_icl_ma =
-				(int)India_thermal_mitigation[chip->therm_lvl_sel];
-			pr_err("Thermal_India.\n");
-		} else {
+
 			thermal_icl_ma =
 				(int)chip->thermal_mitigation[chip->therm_lvl_sel];
-			pr_err("Thermal_CN&Global.\n");
-		}
+
 		rc = vote(chip->usb_icl_votable, THERMAL_ICL_VOTER, true,
 					thermal_icl_ma);
 		if (rc < 0)
@@ -4569,7 +4551,7 @@ static void smbchg_cool_limit_work(struct work_struct *work)
 	}
 	if(temp > 50 && temp < 150){
 		mutex_lock(&chip->cool_current);
-		rc = smbchg_fastchg_current_comp_set(chip,1200);
+		rc = smbchg_fastchg_current_comp_set(chip,900);
 		mutex_unlock(&chip->cool_current);
 	}
 
@@ -4744,6 +4726,7 @@ static int smbchg_change_usb_supply_type(struct smbchg_chip *chip,
 	 * modes, skip all BC 1.2 current if external typec is supported.
 	 * Note: for SDP supporting current based on USB notifications.
 	 */
+	hvdcp_type = type;
 	if (chip->typec_psy && (type != POWER_SUPPLY_TYPE_USB))
 		current_limit_ma = chip->typec_current_ma;
 	else if (type == POWER_SUPPLY_TYPE_USB)
@@ -4971,19 +4954,10 @@ static int smbchg_restricted_charging(struct smbchg_chip *chip, bool enable)
 	return rc;
 }
 
-/*Modifiy by HQ-zmc [Date: 2018-04-04 15:23:36]*/
-static bool tp_usb_plugin = 0;
-
-bool *check_charge_mode(void){
-	return &tp_usb_plugin;
-}
-
 static void handle_usb_removal(struct smbchg_chip *chip)
 {
 	struct power_supply *parallel_psy = get_parallel_psy(chip);
 	int rc;
-
-	tp_usb_plugin = 0;
 
 	pr_smb(PR_STATUS, "triggered\n");
 	smbchg_aicl_deglitch_wa_check(chip);
@@ -5060,8 +5034,6 @@ static void handle_usb_insertion(struct smbchg_chip *chip)
 	enum power_supply_type usb_supply_type;
 	int rc;
 	char *usb_type_name = "null";
-
-	tp_usb_plugin = 1;
 
 	pr_smb(PR_STATUS, "triggered\n");
 	/* usb inserted */
@@ -6181,6 +6153,7 @@ static enum power_supply_property smbchg_battery_properties[] = {
 	POWER_SUPPLY_PROP_HEALTH,
 	POWER_SUPPLY_PROP_TECHNOLOGY,
 	POWER_SUPPLY_PROP_SYSTEM_TEMP_LEVEL,
+	POWER_SUPPLY_PROP_CHARGE_CONTROL_LIMIT,
 	POWER_SUPPLY_PROP_FLASH_CURRENT_MAX,
 	POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX,
 	POWER_SUPPLY_PROP_VOLTAGE_MAX,
@@ -6367,6 +6340,9 @@ static int smbchg_battery_get_property(struct power_supply *psy,
 		val->intval = chip->fastchg_current_ma * 1000;
 		break;
 	case POWER_SUPPLY_PROP_SYSTEM_TEMP_LEVEL:
+		val->intval = chip->therm_lvl_sel;
+		break;
+	case POWER_SUPPLY_PROP_CHARGE_CONTROL_LIMIT:
 		val->intval = chip->therm_lvl_sel;
 		break;
 	case POWER_SUPPLY_PROP_INPUT_CURRENT_MAX:
@@ -8524,7 +8500,6 @@ static int smbchg_probe(struct spmi_device *spmi)
 	struct power_supply *usb_psy, *typec_psy = NULL;
 	struct qpnp_vadc_chip *vadc_dev = NULL, *vchg_vadc_dev = NULL;
 	const char *typec_psy_name;
-
 	usb_psy = power_supply_get_by_name("usb");
 	if (!usb_psy) {
 		pr_smb(PR_STATUS, "USB supply not found, deferring probe\n");
@@ -8737,7 +8712,6 @@ static int smbchg_probe(struct spmi_device *spmi)
 			"Unable to determine init status rc = %d\n", rc);
 		goto out;
 	}
-
 	chip->previous_soc = -EINVAL;
 	chip->batt_psy.name		= chip->battery_psy_name;
 	chip->batt_psy.type		= POWER_SUPPLY_TYPE_BATTERY;

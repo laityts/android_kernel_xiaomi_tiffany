@@ -241,7 +241,7 @@ static struct fg_mem_setting settings[FG_MEM_SETTING_MAX] = {
 	SETTING(SOFT_COLD,       0x454,   0,      150),
 	SETTING(SOFT_HOT,        0x454,   1,      450),
 	SETTING(HARD_COLD,       0x454,   2,      0),
-	SETTING(HARD_HOT,        0x454,   3,      600),
+	SETTING(HARD_HOT,        0x454,   3,      550),
 	SETTING(RESUME_SOC,      0x45C,   1,      0),
 	SETTING(BCL_LM_THRESHOLD, 0x47C,   2,      50),
 	SETTING(BCL_MH_THRESHOLD, 0x47C,   3,      752),
@@ -2245,7 +2245,7 @@ static int get_monotonic_soc_raw(struct fg_chip *chip)
 #define FULL_SOC_RAW		0xFF
 static int get_prop_capacity(struct fg_chip *chip)
 {
-	int msoc, rc, soc_tmp;
+	int msoc, rc;
 	bool vbatt_low_sts;
 
 	if (chip->use_last_soc && chip->last_soc) {
@@ -2295,15 +2295,8 @@ static int get_prop_capacity(struct fg_chip *chip)
 		return FULL_CAPACITY;
 	}
 
-	soc_tmp = DIV_ROUND_CLOSEST((msoc - 1) * (FULL_CAPACITY - 2),
+	return DIV_ROUND_CLOSEST((msoc - 1) * (FULL_CAPACITY - 2),
 			FULL_SOC_RAW - 2) + 1;
-
-	if(chip->status == POWER_SUPPLY_STATUS_FULL && soc_tmp == 99) {
-		soc_tmp = 100;
-		pr_err("Full, Update soc_tmp.\n");
-	}
-
-	return soc_tmp;
 }
 
 #define HIGH_BIAS	3
@@ -4499,6 +4492,8 @@ static bool fg_validate_battery_info(struct fg_chip *chip)
 	if (batt_soc != 0 && batt_soc != FULL_SOC_RAW)
 		batt_soc = DIV_ROUND_CLOSEST((batt_soc - 1) *
 				(FULL_CAPACITY - 2), FULL_SOC_RAW - 2) + 1;
+	if (batt_soc == FULL_SOC_RAW)
+		chip->batt_info[BATT_INFO_SOC] = 100;
 
 	if (*chip->batt_range_ocv && chip->batt_max_voltage_uv > 1000)
 		delta_pct =  DIV_ROUND_CLOSEST(abs(batt_volt_mv -
@@ -4651,10 +4646,10 @@ static int fg_power_get_property(struct power_supply *psy,
 			val->intval = 1;
 		break;
 	case POWER_SUPPLY_PROP_CHARGE_FULL_DESIGN:
-		val->intval = 4000000;
+		val->intval = chip->nom_cap_uah;
 		break;
 	case POWER_SUPPLY_PROP_CHARGE_FULL:
-		val->intval = 4000000;
+		val->intval = chip->learning_data.learned_cc_uah;
 		break;
 	case POWER_SUPPLY_PROP_CHARGE_NOW:
 		val->intval = chip->learning_data.cc_uah;
@@ -6314,7 +6309,6 @@ fail:
 	return -EINVAL;
 }
 
-#ifdef FACTORY_VERSION_ENABLE
 #define REDO_BATID_DURING_FIRST_EST BIT(4)
 static void fg_hw_restart(struct fg_chip *chip)
 {
@@ -6358,30 +6352,21 @@ static void fg_hw_restart(struct fg_chip *chip)
 	batt_id = get_sram_prop_now(chip, FG_DATA_BATT_ID);
 	printk("fg_hw_restart new batt_id=%d\n",batt_id);
 }
-#endif
 
 #define FG_PROFILE_LEN			128
 #define PROFILE_COMPARE_LEN		32
 #define THERMAL_COEFF_ADDR		0x444
 #define THERMAL_COEFF_OFFSET		0x2
 #define BATTERY_PSY_WAIT_MS		2000
-
-#ifdef FACTORY_VERSION_ENABLE
-#define SCUD_ID_MAX 43600
-#define SCUD_ID_MIN 39000
-#define COSLIGHT_ID_MAX 53600
-#define COSLIGHT_ID_MIN 48000
-#define SUNWODA_ID_MAX 82000
-#define SUNWODA_ID_MIN 73000
-#endif
 static int fg_batt_profile_init(struct fg_chip *chip)
 {
 	int rc = 0, ret;
 	int len;
 
-	#ifdef FACTORY_VERSION_ENABLE
-	int batt_id = 0, match = 0;
-	#endif
+	int i;
+	int batts_id_ohm[3] = {24000,40000, 50000};
+	int delta = 0, limit = 0,batt_id = 0, match = 0, id_range_pct = 5;
+	bool in_range = false;
 
 	struct device_node *node = chip->spmi->dev.of_node;
 	struct device_node *batt_node, *profile_node;
@@ -6389,29 +6374,27 @@ static int fg_batt_profile_init(struct fg_chip *chip)
 	bool tried_again = false, vbat_in_range, profiles_same;
 	u8 reg = 0;
 
-	#ifdef FACTORY_VERSION_ENABLE
 	batt_id = get_sram_prop_now(chip, FG_DATA_BATT_ID);
 	printk("batt_id_ohm=%d\n",batt_id);
-
-
-
-
-	if(batt_id >= SCUD_ID_MIN && batt_id <= SCUD_ID_MAX) {
-		match = 1;
-		printk("SCUD match succ.\n");
-	} else if(batt_id >= COSLIGHT_ID_MIN && batt_id <= COSLIGHT_ID_MAX) {
-		match = 1;
-		printk("COSLIGHT match succ.\n");
-	} else if(batt_id >= SUNWODA_ID_MIN && batt_id <= SUNWODA_ID_MAX) {
-		match = 1;
-		printk("SUNWODA match succ.\n");
+	for (i = 0; i < 3; i++) {
+	delta = abs(batts_id_ohm[i] - batt_id);
+	printk("delta=%d\n",delta);
+	limit = (batts_id_ohm[i] * id_range_pct / 100);
+	if (batts_id_ohm[i] == 24000)
+		limit += 800;
+	printk("limit=%d\n",limit);
+	in_range = (delta <= limit);
+	printk("in_range=%d\n",in_range);
+		if (in_range != 0) {
+			match = 1;
+			printk("match=%d\n",match);
+		}
 	}
 	if (match == 0) {
 		fg_hw_restart(chip);
 		printk("re-read bat id\n");
 	}
 	printk("batt_id=%d\n",get_sram_prop_now(chip, FG_DATA_BATT_ID));
-	#endif
 
 wait:
 	fg_stay_awake(&chip->profile_wakeup_source);
@@ -7214,13 +7197,9 @@ static int fg_of_init(struct fg_chip *chip)
 	chip->use_otp_profile = of_property_read_bool(
 			chip->spmi->dev.of_node,
 			"qcom,use-otp-profile");
-#ifdef FACTORY_VERSION_ENABLE
-	chip->hold_soc_while_full = false;
-#else
 	chip->hold_soc_while_full = of_property_read_bool(
 			chip->spmi->dev.of_node,
 			"qcom,hold-soc-while-full");
-#endif
 
 	sense_type = of_property_read_bool(chip->spmi->dev.of_node,
 					"qcom,ext-sense-type");
